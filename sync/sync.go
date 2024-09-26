@@ -1,10 +1,8 @@
 package sync
 
 import (
-	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	"gorm.io/gorm"
 )
@@ -17,203 +15,100 @@ type SyncOptions struct {
 	AfterSync         func(state interface{}) error
 }
 
-func SyncDatabase(options SyncOptions) error {
-	state := make(map[string]interface{})
-
-	if options.BeforeSync != nil {
-		if err := options.BeforeSync(state); err != nil {
-			return err
-		}
-	}
-
-	fmt.Println("Starting sync...")
-	// Add your sync logic here if necessary
-
-	if options.AfterSync != nil {
-		if err := options.AfterSync(state); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
 func SynchronizeDatabases(fromDb *gorm.DB, toDb *gorm.DB) error {
 	collections, err := fromDb.Migrator().GetTables()
 	if err != nil {
-		return err
+		return fmt.Errorf("error getting tables: %w", err)
 	}
 
-	const chunkSize = 1000 // Adjust this value based on your needs and memory constraints
+	fmt.Printf("Found %d tables to synchronize\n", len(collections))
+
+	// Able to adjust this value based on your needs
+	const chunkSize = 500
 
 	for _, table := range collections {
-		var totalRecords int64
-		if err := fromDb.Table(table).Count(&totalRecords).Error; err != nil {
-			return fmt.Errorf("error counting records in %s: %w", table, err)
+		fmt.Printf("Starting synchronization for table: %s\n", table)
+
+		var sourceCount int64
+		if err := fromDb.Table(table).Count(&sourceCount).Error; err != nil {
+			return fmt.Errorf("error counting records in source %s: %w", table, err)
 		}
+		fmt.Printf("Records in source %s: %d\n", table, sourceCount)
 
-		// Start a transaction for each table
-		err := toDb.Transaction(func(tx *gorm.DB) error {
-			for offset := 0; offset < int(totalRecords); offset += chunkSize {
-				if err := processChunk(fromDb, tx, table, offset, chunkSize); err != nil {
-					return err
-				}
+		// Process inserts and updates
+		for offset := 0; offset < int(sourceCount); offset += chunkSize {
+			// fmt.Printf("Processing chunk for %s: offset %d\n", table, offset)
+			if err := processChunk(fromDb, toDb, table, offset, chunkSize); err != nil {
+				return fmt.Errorf("error processing chunk for %s at offset %d: %w", table, offset, err)
 			}
-
-			if err := chunkedDeletion(fromDb, tx, table, chunkSize); err != nil {
-				return err
-			}
-			return nil
-		})
-
-		if err != nil {
-			return err
 		}
+		fmt.Printf("Completed synchronization for table: %s\n", table)
 	}
 
+	fmt.Println("Synchronization completed successfully")
 	return nil
 }
 
 func processChunk(fromDb *gorm.DB, toDb *gorm.DB, table string, offset, chunkSize int) error {
+	// If you want to see the time taken for each chunk, you can uncomment the following code
+	// start := time.Now()
+	// defer func() {
+	// 	fmt.Printf("Chunk processing for %s (offset %d) took %v\n", table, offset, time.Since(start))
+	// }()
+
 	// Fetch chunk of data from source database
 	var sourceData []map[string]interface{}
 	if err := fromDb.Table(table).Offset(offset).Limit(chunkSize).Find(&sourceData).Error; err != nil {
 		return fmt.Errorf("error fetching data from %s: %w", table, err)
 	}
+	fmt.Printf("Fetched %d records from source %s\n", len(sourceData), table)
 
 	// Transform source data
 	for i := range sourceData {
 		transformRecord(sourceData[i])
 	}
 
-	// Extract IDs from the current chunk
-	var chunkIDs []interface{}
-	for _, record := range sourceData {
-		chunkIDs = append(chunkIDs, record["id"])
-	}
-
-	// Fetch corresponding records from target database
-	var targetData []map[string]interface{}
-	if err := toDb.Table(table).Where("id IN ?", chunkIDs).Find(&targetData).Error; err != nil {
-		return fmt.Errorf("error fetching data from target %s: %w", table, err)
-	}
-
-	// Prepare data for operations
-	toInsert := []map[string]interface{}{}
-	toUpdate := []map[string]interface{}{}
-	existingIDs := make(map[interface{}]bool)
-
-	for _, targetRecord := range targetData {
-		existingIDs[targetRecord["id"]] = true
-	}
-
-	for _, sourceRecord := range sourceData {
-		id := sourceRecord["id"]
-		if !existingIDs[id] {
-			toInsert = append(toInsert, sourceRecord)
-		} else {
-			toUpdate = append(toUpdate, sourceRecord)
-		}
-	}
-
-	// Perform bulk insert
-	if len(toInsert) > 0 {
-		if err := toDb.Table(table).Create(toInsert).Error; err != nil {
-			return fmt.Errorf("failed to bulk insert into %s: %w", table, err)
-		}
-	}
-
-	// Perform bulk update using raw SQL
-	if len(toUpdate) > 0 {
-		if err := bulkUpdate(toDb, table, toUpdate); err != nil {
-			return fmt.Errorf("failed to bulk update %s: %w", table, err)
-		}
-	}
-
-	// Add a short delay between chunks to allow other transactions to proceed
-	time.Sleep(10 * time.Millisecond)
-
-	return nil
-}
-
-func bulkUpdate(db *gorm.DB, table string, records []map[string]interface{}) error {
-	if len(records) == 0 {
+	if len(sourceData) == 0 {
 		return nil
 	}
 
-	// Get column names from the first record
-	var columns []string
-	for column := range records[0] {
-		if column != "id" {
-			columns = append(columns, column)
+	// Prepare the upsert query
+	columns := make([]string, 0, len(sourceData[0]))
+	for column := range sourceData[0] {
+		columns = append(columns, column)
+	}
+
+	query := fmt.Sprintf("INSERT INTO %s (%s) VALUES ", table, strings.Join(columns, ", "))
+
+	placeholders := make([]string, len(sourceData))
+	values := make([]interface{}, 0, len(sourceData)*len(columns))
+
+	for i, record := range sourceData {
+		placeholders[i] = "(" + strings.Repeat("?,", len(columns)-1) + "?)"
+		for _, column := range columns {
+			values = append(values, record[column])
 		}
 	}
 
-	// Construct the SQL query
-	query := fmt.Sprintf("UPDATE %s SET ", table)
-	for i, column := range columns {
-		if i > 0 {
-			query += ", "
-		}
-		query += fmt.Sprintf("%s = CASE id ", column)
-		for range records {
-			query += "WHEN ? THEN ? "
-		}
-		query += "ELSE " + column + " END"
-	}
+	query += strings.Join(placeholders, ", ")
+	query += " ON DUPLICATE KEY UPDATE "
 
-	// Add WHERE clause
-	query += " WHERE id IN (" + strings.Repeat("?,", len(records)-1) + "?)"
-
-	// Prepare the arguments for the statement
-	args := []interface{}{}
+	updates := make([]string, 0, len(columns))
 	for _, column := range columns {
-		for _, record := range records {
-			args = append(args, record["id"], record[column])
+		if column != "id" {
+			updates = append(updates, fmt.Sprintf("%s = VALUES(%s)", column, column))
 		}
 	}
-	for _, record := range records {
-		args = append(args, record["id"])
-	}
+	query += strings.Join(updates, ", ")
 
-	// Execute the prepared statement with a timeout
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	result := db.WithContext(ctx).Exec(query, args...)
+	// Execute the upsert query
+	result := toDb.Exec(query, values...)
 	if result.Error != nil {
-		return fmt.Errorf("failed to execute bulk update: %w", result.Error)
+		return fmt.Errorf("failed to upsert data into %s: %w", table, result.Error)
 	}
 
-	return nil
-}
-
-func chunkedDeletion(fromDb *gorm.DB, toDb *gorm.DB, table string, chunkSize int) error {
-	var offset int64
-
-	// Prepare the deletion statement
-	deleteQuery := fmt.Sprintf("DELETE FROM %s WHERE id NOT IN (SELECT id FROM (?) AS temp)", table)
-
-	for {
-		var sourceIDs []interface{}
-		if err := fromDb.Table(table).Select("id").Offset(int(offset)).Limit(chunkSize).Pluck("id", &sourceIDs).Error; err != nil {
-			return fmt.Errorf("error fetching source IDs from %s: %w", table, err)
-		}
-
-		if len(sourceIDs) == 0 {
-			break // No more IDs to process
-		}
-
-		// Construct the subquery for the current chunk
-		subquery := fromDb.Table(table).Select("id").Where("id IN (?)", sourceIDs)
-
-		// Execute the prepared deletion statement
-		if err := toDb.Exec(deleteQuery, subquery).Error; err != nil {
-			return fmt.Errorf("failed to delete obsolete records from %s: %w", table, err)
-		}
-
-		offset += int64(len(sourceIDs))
-	}
+	affected := result.RowsAffected
+	fmt.Printf("Upserted %d rows in %s\n", affected, table)
 
 	return nil
 }
