@@ -4,8 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
-
-	"github.com/shennawardana23/sync" // Replace 'your_module_name' with your actual module name
+	"sync_db_go/sync"
 
 	"github.com/joho/godotenv"
 	"gorm.io/driver/mysql"
