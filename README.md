@@ -54,5 +54,5 @@ If all data in `db_local` is the same as in `db_staging`, the synchronization pr
 ## Run Migration
 
 ```bash
-> go run main.go
+> make run
 ```

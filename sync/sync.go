@@ -237,20 +237,3 @@ func transformRecord(record map[string]interface{}) {
 		record["hotel_whatsapp"] = "080-1111-1111"
 	}
 }
-
-// SyncDatabases synchronizes data between production, staging, and local databases
-func SyncDatabases(dbProduction, dbStaging, dbLocal *gorm.DB) error {
-	// Synchronize data from production to staging
-	err := SynchronizeDatabases(dbProduction, dbStaging)
-	if err != nil {
-		return fmt.Errorf("error synchronizing production to staging: %w", err)
-	}
-
-	// Synchronize data from staging to local
-	err = SynchronizeDatabases(dbStaging, dbLocal)
-	if err != nil {
-		return fmt.Errorf("error synchronizing staging to local: %w", err)
-	}
-
-	return nil
-}
