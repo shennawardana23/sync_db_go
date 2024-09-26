@@ -33,7 +33,7 @@ func SynchronizeDatabases(fromDb *gorm.DB, toDb *gorm.DB) error {
 		if err := fromDb.Table(table).Count(&sourceCount).Error; err != nil {
 			return fmt.Errorf("error counting records in source %s: %w", table, err)
 		}
-		fmt.Printf("Records in source %s: %d\n", table, sourceCount)
+		fmt.Printf("Records in source %s: [ %d ]\n", table, sourceCount)
 
 		// Process inserts and updates
 		for offset := 0; offset < int(sourceCount); offset += chunkSize {
