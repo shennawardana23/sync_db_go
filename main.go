@@ -29,7 +29,7 @@ func main() {
 
 	// Perform database synchronization
 	if migrationFrom == "production" {
-		fmt.Println("Starting synchronization from production to staging ....")
+		fmt.Println("Starting synchronization from production to staging 🚀 🚀 🚀")
 		totalStart := time.Now()
 
 		// Connect to production database
@@ -50,10 +50,10 @@ func main() {
 			log.Fatal("error synchronizing production to staging:", err)
 		}
 
-		fmt.Printf("Total synchronization time from %s: %v\n", migrationFrom, time.Since(totalStart))
+		fmt.Printf("Total synchronization time from %s: %v\n 🕒", migrationFrom, time.Since(totalStart))
 
 	} else if migrationFrom == "staging" {
-		fmt.Println("Starting synchronization from staging to local ....")
+		fmt.Println("Starting synchronization from staging to local 🚀 🚀 🚀")
 		totalStart := time.Now()
 
 		// Connect to staging database
@@ -74,7 +74,7 @@ func main() {
 			log.Fatal("error synchronizing staging to local:", err)
 		}
 
-		fmt.Printf("Total synchronization time from %s: %v\n", migrationFrom, time.Since(totalStart))
+		fmt.Printf("Total synchronization time 🕒 from %s: %v\n", migrationFrom, time.Since(totalStart))
 	}
 }
 

@@ -45,7 +45,7 @@ func SynchronizeDatabases(fromDb *gorm.DB, toDb *gorm.DB) error {
 		fmt.Printf("Completed synchronization for table: %s\n", table)
 	}
 
-	fmt.Println("Synchronization completed successfully")
+	fmt.Println("Synchronization completed successfully 🎉 🎉 🎉")
 	return nil
 }
 
@@ -61,7 +61,7 @@ func processChunk(fromDb *gorm.DB, toDb *gorm.DB, table string, offset, chunkSiz
 	if err := fromDb.Table(table).Offset(offset).Limit(chunkSize).Find(&sourceData).Error; err != nil {
 		return fmt.Errorf("error fetching data from %s: %w", table, err)
 	}
-	fmt.Printf("Fetched %d records from source %s\n", len(sourceData), table)
+	fmt.Printf("Fetched %d records <----- from source table : %s\n", len(sourceData), table)
 
 	// Transform source data
 	for i := range sourceData {
@@ -104,11 +104,11 @@ func processChunk(fromDb *gorm.DB, toDb *gorm.DB, table string, offset, chunkSiz
 	// Execute the upsert query
 	result := toDb.Exec(query, values...)
 	if result.Error != nil {
-		return fmt.Errorf("failed to upsert data into %s: %w", table, result.Error)
+		return fmt.Errorf("failed to upsert data into target table: %s: %w", table, result.Error)
 	}
 
 	affected := result.RowsAffected
-	fmt.Printf("Upserted %d rows in %s\n", affected, table)
+	fmt.Printf("Upserted %d rows -----> to target table : %s\n", affected, table)
 
 	return nil
 }
