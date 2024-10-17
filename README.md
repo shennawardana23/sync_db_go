@@ -54,3 +54,18 @@ If all data in `db_local` is the same as in `db_staging`, the synchronization pr
 ```bash
 > make run
 ```
+
+# Synchronization Process Diagram
+
+```mermaid
+graph TD;
+    A[db_staging - Source DB] -->|Fetch Data| B[Fetch Data]
+    B --> D[Transform Data]
+    D --> E[Insert/Update]
+    E --> F[Delete Obsolete Records]
+    A -->|Check Existence| C[Check Existence]
+    C --> E
+    A -->|db_local - Target DB| D
+````
+
+---
