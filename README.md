@@ -8,9 +8,7 @@ When  run the `SynchronizeDatabases` function, it performs the following steps:
 
 1. **Fetch Data**: It retrieves all records from the `db_staging` for each table.
 
-2. **Clear Table**: Before inserting new data into `db_local`, it deletes all existing records in the corresponding table. This means that regardless of whether the data in `db_local` is the same as in `db_staging`, all records in `db_local` will be removed.
-
-3. **Insert New Data**: After clearing the local table, it inserts all the records fetched from `db_staging` into `db_local`.
+2. **Insert New Data**: After clearing the local table, it inserts all the records fetched from `db_staging` into `db_local`.
 
 ## Key Points
 
