@@ -26,8 +26,11 @@ func SynchronizeDatabases(fromDb *gorm.DB, toDb *gorm.DB) error {
 
 	fmt.Printf("Found %d tables to synchronize\n", len(collections))
 
-	const chunkSize = 500
-	const numWorkers = 5 // Adjust the number of workers as needed
+	const (
+		chunkSize = 500
+		// Adjust the number of workers as needed
+		numWorkers = 5
+	)
 
 	for _, table := range collections {
 		if table == "logs" || table == "tb_reservation" {
@@ -47,13 +50,12 @@ func SynchronizeDatabases(fromDb *gorm.DB, toDb *gorm.DB) error {
 		}
 		fmt.Printf("Records in source %s: [ %d ]\n", table, sourceCount)
 
-		// Create a channel to send tasks to workers
-		tasks := make(chan int, sourceCount/chunkSize)
+		var (
+			wg              sync.WaitGroup
+			processedChunks int32
+			tasks           = make(chan int, sourceCount/chunkSize)
+		)
 
-		var wg sync.WaitGroup
-		var processedChunks int32 // Atomic counter for processed chunks
-
-		// Start worker goroutines
 		for w := 0; w < numWorkers; w++ {
 			wg.Add(1)
 			go func(workerID int) {
@@ -63,7 +65,7 @@ func SynchronizeDatabases(fromDb *gorm.DB, toDb *gorm.DB) error {
 					if err := processChunk(fromDb, toDb, table, offset, chunkSize); err != nil {
 						fmt.Printf("Error processing chunk for %s at offset %d: %v\n", table, offset, err)
 					}
-					atomic.AddInt32(&processedChunks, 1) // Increment the processed chunks counter
+					atomic.AddInt32(&processedChunks, 1)
 				}
 			}(w)
 		}
@@ -72,11 +74,9 @@ func SynchronizeDatabases(fromDb *gorm.DB, toDb *gorm.DB) error {
 		for offset := 0; offset < int(sourceCount); offset += chunkSize {
 			tasks <- offset
 		}
-		close(tasks) // Close the channel to signal no more tasks
+		close(tasks)
 
-		// Wait for all workers to finish
 		wg.Wait()
-
 		fmt.Printf("Completed synchronization for table: %s. Processed %d chunks.\n", table, processedChunks)
 	}
 
@@ -138,6 +138,12 @@ type ColumnInfo struct {
 }
 
 func processChunk(fromDb *gorm.DB, toDb *gorm.DB, table string, offset, chunkSize int) error {
+	// If you want to see the time taken for each chunk, you can uncomment the following code
+	// start := time.Now()
+	// defer func() {
+	// 	fmt.Printf("Chunk processing for %s (offset %d) took %v\n", table, offset, time.Since(start))
+	// }()
+
 	var sourceData []map[string]interface{}
 	if err := fromDb.Table(table).Offset(offset).Limit(chunkSize).Find(&sourceData).Error; err != nil {
 		return fmt.Errorf("error fetching data from %s: %w", table, err)
@@ -215,7 +221,7 @@ func getGoroutineID() uint64 {
 	n := runtime.Stack(buf[:], true)
 	for i := 0; i < n; i++ {
 		if buf[i] == ' ' {
-			return uint64(buf[i+1]) // Return the goroutine ID
+			return uint64(buf[i+1])
 		}
 	}
 	return 0

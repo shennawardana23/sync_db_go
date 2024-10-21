@@ -38,7 +38,8 @@ func (db *GormDb) Describe() string {
 }
 
 func (db *GormDb) Connect() error {
-	return nil // GORM handles the connection
+	// GORM handles the connection
+	return nil
 }
 
 func (db *GormDb) GetCollections() ([]ReadableCollection, error) {
