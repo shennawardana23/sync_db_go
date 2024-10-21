@@ -2,7 +2,10 @@ package sync
 
 import (
 	"fmt"
+	"runtime"
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	"gorm.io/gorm"
 )
@@ -23,11 +26,10 @@ func SynchronizeDatabases(fromDb *gorm.DB, toDb *gorm.DB) error {
 
 	fmt.Printf("Found %d tables to synchronize\n", len(collections))
 
-	// Able to adjust this value based on your needs
 	const chunkSize = 500
+	const numWorkers = 5 // Adjust the number of workers as needed
 
 	for _, table := range collections {
-		// Skip the specific table (e.g., "logs")
 		if table == "logs" || table == "tb_reservation" {
 			fmt.Printf("Skipping synchronization for table: %s\n", table)
 			continue
@@ -35,7 +37,6 @@ func SynchronizeDatabases(fromDb *gorm.DB, toDb *gorm.DB) error {
 
 		fmt.Printf("Starting synchronization for table: %s\n", table)
 
-		// Check if the target table exists, and create it if it doesn't
 		if err := createTableIfNotExists(fromDb, toDb, table); err != nil {
 			return fmt.Errorf("error creating table %s: %w", table, err)
 		}
@@ -46,14 +47,37 @@ func SynchronizeDatabases(fromDb *gorm.DB, toDb *gorm.DB) error {
 		}
 		fmt.Printf("Records in source %s: [ %d ]\n", table, sourceCount)
 
-		// Process inserts and updates
-		for offset := 0; offset < int(sourceCount); offset += chunkSize {
-			// fmt.Printf("Processing chunk for %s: offset %d\n", table, offset)
-			if err := processChunk(fromDb, toDb, table, offset, chunkSize); err != nil {
-				return fmt.Errorf("error processing chunk for %s at offset %d: %w", table, offset, err)
-			}
+		// Create a channel to send tasks to workers
+		tasks := make(chan int, sourceCount/chunkSize)
+
+		var wg sync.WaitGroup
+		var processedChunks int32 // Atomic counter for processed chunks
+
+		// Start worker goroutines
+		for w := 0; w < numWorkers; w++ {
+			wg.Add(1)
+			go func(workerID int) {
+				defer wg.Done()
+				for offset := range tasks {
+					fmt.Printf("Worker %d (Goroutine ID: %d) processing chunk at offset %d\n", workerID, getGoroutineID(), offset)
+					if err := processChunk(fromDb, toDb, table, offset, chunkSize); err != nil {
+						fmt.Printf("Error processing chunk for %s at offset %d: %v\n", table, offset, err)
+					}
+					atomic.AddInt32(&processedChunks, 1) // Increment the processed chunks counter
+				}
+			}(w)
 		}
-		fmt.Printf("Completed synchronization for table: %s\n", table)
+
+		// Send tasks to the channel
+		for offset := 0; offset < int(sourceCount); offset += chunkSize {
+			tasks <- offset
+		}
+		close(tasks) // Close the channel to signal no more tasks
+
+		// Wait for all workers to finish
+		wg.Wait()
+
+		fmt.Printf("Completed synchronization for table: %s. Processed %d chunks.\n", table, processedChunks)
 	}
 
 	fmt.Println("Synchronization completed successfully 🎉 🎉 🎉")
@@ -62,16 +86,13 @@ func SynchronizeDatabases(fromDb *gorm.DB, toDb *gorm.DB) error {
 
 // Function to create the target table if it does not exist
 func createTableIfNotExists(fromDb *gorm.DB, toDb *gorm.DB, table string) error {
-	// Get the column types from the source table
 	columnTypes, err := getColumnTypes(fromDb, table)
 	if err != nil {
 		return err
 	}
 
-	// Build the CREATE TABLE statement while maintaining the order of columns
 	var columns []string
 	for _, column := range columnTypes {
-		// Use backticks for column names
 		columns = append(columns, fmt.Sprintf("`%s` %s", column.Name, column.Type))
 	}
 
@@ -83,7 +104,6 @@ func createTableIfNotExists(fromDb *gorm.DB, toDb *gorm.DB, table string) error 
 func getColumnTypes(db *gorm.DB, table string) ([]ColumnInfo, error) {
 	var columnTypes []ColumnInfo
 
-	// Query to get column information
 	rows, err := db.Raw("SHOW COLUMNS FROM " + table).Rows()
 	if err != nil {
 		return nil, fmt.Errorf("error fetching column types for table %s: %w", table, err)
@@ -98,7 +118,6 @@ func getColumnTypes(db *gorm.DB, table string) ([]ColumnInfo, error) {
 			return nil, fmt.Errorf("error scanning column types for table %s: %w", table, err)
 		}
 
-		// Map the column type to a valid SQL type
 		sqlType := columnType
 		if nullable == "YES" {
 			sqlType += " NULL"
@@ -119,14 +138,12 @@ type ColumnInfo struct {
 }
 
 func processChunk(fromDb *gorm.DB, toDb *gorm.DB, table string, offset, chunkSize int) error {
-	// Fetch chunk of data from source database
 	var sourceData []map[string]interface{}
 	if err := fromDb.Table(table).Offset(offset).Limit(chunkSize).Find(&sourceData).Error; err != nil {
 		return fmt.Errorf("error fetching data from %s: %w", table, err)
 	}
 	fmt.Printf("Fetched %d records <----- from source table : %s\n", len(sourceData), table)
 
-	// Transform source data
 	for i := range sourceData {
 		transformRecord(sourceData[i])
 	}
@@ -135,10 +152,8 @@ func processChunk(fromDb *gorm.DB, toDb *gorm.DB, table string, offset, chunkSiz
 		return nil
 	}
 
-	// Prepare the upsert query
 	columns := make([]string, 0, len(sourceData[0]))
 	for column := range sourceData[0] {
-		// Use backticks for the column names if they are "desc" or "order"
 		if column == "desc" || column == "order" || column == "group" || column == "code" || column == "value" {
 			columns = append(columns, "`"+column+"`") // Enclose with backticks
 		} else {
@@ -146,7 +161,6 @@ func processChunk(fromDb *gorm.DB, toDb *gorm.DB, table string, offset, chunkSiz
 		}
 	}
 
-	// Prepare the insert statement
 	query := fmt.Sprintf("INSERT INTO %s (%s) VALUES ", table, strings.Join(columns, ", "))
 	placeholders := make([]string, len(sourceData))
 	values := make([]interface{}, 0, len(sourceData)*len(columns))
@@ -160,14 +174,12 @@ func processChunk(fromDb *gorm.DB, toDb *gorm.DB, table string, offset, chunkSiz
 
 	query += strings.Join(placeholders, ", ")
 
-	// Prepare the ON DUPLICATE KEY UPDATE part
 	updateParts := make([]string, 0, len(columns))
 	for _, column := range columns {
 		updateParts = append(updateParts, fmt.Sprintf("%s = VALUES(%s)", column, column))
 	}
 	query += " ON DUPLICATE KEY UPDATE " + strings.Join(updateParts, ", ")
 
-	// Execute the upsert query
 	result := toDb.Exec(query, values...)
 	if result.Error != nil {
 		return fmt.Errorf("failed to upsert data into target table: %s: %w", table, result.Error)
@@ -195,4 +207,16 @@ func transformRecord(record map[string]interface{}) {
 	if _, ok := record["hotel_whatsapp"]; ok {
 		record["hotel_whatsapp"] = "080-1111-1111"
 	}
+}
+
+// Function to get the current goroutine ID
+func getGoroutineID() uint64 {
+	var buf [64]byte
+	n := runtime.Stack(buf[:], true)
+	for i := 0; i < n; i++ {
+		if buf[i] == ' ' {
+			return uint64(buf[i+1]) // Return the goroutine ID
+		}
+	}
+	return 0
 }
